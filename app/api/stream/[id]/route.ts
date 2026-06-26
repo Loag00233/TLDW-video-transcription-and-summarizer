@@ -39,9 +39,29 @@ export async function GET(
     const stream = fs.createReadStream(video.path, { start, end });
     const webStream = new ReadableStream({
       start(controller) {
-        stream.on("data", (chunk) => controller.enqueue(chunk));
-        stream.on("end", () => controller.close());
-        stream.on("error", (err) => controller.error(err));
+        let closed = false;
+        stream.on("data", (chunk) => {
+          if (closed) return;
+          try {
+            controller.enqueue(chunk);
+          } catch {
+            closed = true;
+            stream.destroy();
+          }
+        });
+        stream.on("end", () => {
+          if (closed) return;
+          closed = true;
+          controller.close();
+        });
+        stream.on("error", (err) => {
+          if (closed) return;
+          closed = true;
+          controller.error(err);
+        });
+      },
+      cancel() {
+        stream.destroy();
       },
     });
 
@@ -59,9 +79,29 @@ export async function GET(
   const stream = fs.createReadStream(video.path);
   const webStream = new ReadableStream({
     start(controller) {
-      stream.on("data", (chunk) => controller.enqueue(chunk));
-      stream.on("end", () => controller.close());
-      stream.on("error", (err) => controller.error(err));
+      let closed = false;
+      stream.on("data", (chunk) => {
+        if (closed) return;
+        try {
+          controller.enqueue(chunk);
+        } catch {
+          closed = true;
+          stream.destroy();
+        }
+      });
+      stream.on("end", () => {
+        if (closed) return;
+        closed = true;
+        controller.close();
+      });
+      stream.on("error", (err) => {
+        if (closed) return;
+        closed = true;
+        controller.error(err);
+      });
+    },
+    cancel() {
+      stream.destroy();
     },
   });
 

@@ -2,23 +2,33 @@ import { NextRequest, NextResponse } from "next/server";
 import { nanoid } from "nanoid";
 import fs from "fs";
 import { getDb } from "@/lib/db";
-import { extractSegments, remapTimestamps, type Segment } from "@/lib/ffmpeg";
+import { extractSegments, remapTimestamps, getVideoDuration, type Segment } from "@/lib/ffmpeg";
 import { transcribeAudio } from "@/lib/deepgram";
 import type { VideoRecord } from "@/types";
 
 export async function POST(req: NextRequest) {
-  const { videoId, segments } = await req.json() as {
+  const { videoId, segments: rawSegments } = await req.json() as {
     videoId: string;
-    segments: Segment[];
+    segments?: Segment[];
   };
 
-  if (!videoId || !segments?.length) {
-    return NextResponse.json({ error: "Missing videoId or segments" }, { status: 400 });
+  if (!videoId) {
+    return NextResponse.json({ error: "Missing videoId" }, { status: 400 });
   }
 
   const db = getDb();
   const video = db.prepare("SELECT * FROM videos WHERE id = ?").get(videoId) as VideoRecord | undefined;
   if (!video) return NextResponse.json({ error: "Video not found" }, { status: 404 });
+
+  // Сегменты не выбраны — обрабатываем весь файл целиком.
+  let segments = rawSegments ?? [];
+  if (segments.length === 0) {
+    const duration = video.duration_sec ?? (await getVideoDuration(video.path));
+    if (!duration || duration <= 0) {
+      return NextResponse.json({ error: "Не удалось определить длительность видео" }, { status: 400 });
+    }
+    segments = [{ start: 0, end: duration }];
+  }
 
   const transcriptionId = nanoid(10);
   const totalAudioSec = segments.reduce((sum, s) => sum + (s.end - s.start), 0);

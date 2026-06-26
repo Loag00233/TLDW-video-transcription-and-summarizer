@@ -33,8 +33,9 @@ export async function transcribeAudio(
     audioBuffer,
     {
       model: "nova-3",
-      language: language === "multi" ? undefined : language,
-      detect_language: true,
+      // nova-3 принимает "multi" (code-switching RU/EN) либо конкретный код
+      // языка. detect_language тут не поддерживается и ломает запрос.
+      language,
       smart_format: true,
       punctuate: true,
       diarize: true,

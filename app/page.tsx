@@ -11,6 +11,8 @@ interface VideoRow {
   language: string;
   created_at: number;
   last_status: string | null;
+  last_started_at: number | null;
+  last_audio_sec: number | null;
   structured_count: number;
 }
 
@@ -24,6 +26,7 @@ export default function LibraryPage() {
   const [videos, setVideos] = useState<VideoRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [showSetup, setShowSetup] = useState(false);
+  const [nowTick, setNowTick] = useState(() => Date.now());
 
   const loadSetup = () =>
     fetch("/api/settings")
@@ -47,6 +50,18 @@ export default function LibraryPage() {
       .then((r) => r.json())
       .then((data) => { setVideos(data); setLoading(false); });
   }, []);
+
+  // Пока хоть одно видео в обработке — опрашиваем список и тикаем часы, чтобы
+  // прогресс/таймер жили и здесь (например, после ухода со страницы видео).
+  const anyProcessing = videos.some((v) => v.last_status === "processing");
+  useEffect(() => {
+    if (!anyProcessing) return;
+    const tick = setInterval(() => setNowTick(Date.now()), 1000);
+    const poll = setInterval(() => {
+      fetch("/api/videos").then((r) => r.json()).then(setVideos);
+    }, 4000);
+    return () => { clearInterval(tick); clearInterval(poll); };
+  }, [anyProcessing]);
 
   if (!setup || loading) {
     return <p className="text-zinc-500">Загрузка...</p>;
@@ -90,8 +105,14 @@ export default function LibraryPage() {
                 <span className="text-zinc-500 text-xs font-mono shrink-0">
                   {v.duration_sec ? formatDuration(v.duration_sec) : "—"}
                 </span>
-                <span className="text-zinc-500 text-xs w-12 text-center shrink-0">{v.language}</span>
-                <StatusBadge status={v.last_status} structured={v.structured_count > 0} />
+                <span className="text-zinc-500 text-xs w-12 text-center shrink-0">{v.last_status === "done" ? v.language : "—"}</span>
+                <StatusBadge
+                  status={v.last_status}
+                  structured={v.structured_count > 0}
+                  startedAt={v.last_started_at}
+                  audioSec={v.last_audio_sec}
+                  now={nowTick}
+                />
               </a>
             ))}
           </div>
@@ -150,10 +171,34 @@ function KeyBadge({ label, ok }: { label: string; ok: boolean }) {
   );
 }
 
-function StatusBadge({ status, structured }: { status: string | null; structured: boolean }) {
+function StatusBadge({
+  status,
+  structured,
+  startedAt,
+  audioSec,
+  now,
+}: {
+  status: string | null;
+  structured: boolean;
+  startedAt?: number | null;
+  audioSec?: number | null;
+  now?: number;
+}) {
+  if (status === "processing") {
+    const elapsed = startedAt && now ? Math.max(0, Math.floor((now - startedAt) / 1000)) : 0;
+    const estimated = Math.max(8, (audioSec ?? 0) * 0.25);
+    const pct = Math.min(95, Math.round((elapsed / estimated) * 100));
+    const mm = String(Math.floor(elapsed / 60)).padStart(2, "0");
+    const ss = String(elapsed % 60).padStart(2, "0");
+    return (
+      <span className="text-xs bg-yellow-900/40 text-yellow-400 px-2 py-0.5 rounded shrink-0 flex items-center gap-1.5">
+        <span className="w-3 h-3 rounded-full border-2 border-yellow-400 border-t-transparent animate-spin" />
+        обрабатывается {mm}:{ss}{audioSec ? ` · ${pct}%` : ""}
+      </span>
+    );
+  }
   if (structured) return <span className="text-xs bg-green-900/40 text-green-400 px-2 py-0.5 rounded shrink-0">анализ готов</span>;
   if (status === "done") return <span className="text-xs bg-blue-900/40 text-blue-400 px-2 py-0.5 rounded shrink-0">расшифровано</span>;
-  if (status === "processing") return <span className="text-xs bg-yellow-900/40 text-yellow-400 px-2 py-0.5 rounded shrink-0">обрабатывается...</span>;
   if (status === "error") return <span className="text-xs bg-red-900/40 text-red-400 px-2 py-0.5 rounded shrink-0">ошибка</span>;
   return <span className="text-xs bg-zinc-800 text-zinc-500 px-2 py-0.5 rounded shrink-0">нет сегментов</span>;
 }

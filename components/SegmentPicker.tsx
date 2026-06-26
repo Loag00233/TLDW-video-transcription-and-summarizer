@@ -90,8 +90,11 @@ export default function SegmentPicker({
   };
 
   const pct = (t: number) => `${((t / duration) * 100).toFixed(3)}%`;
-  const totalSelected = segments.reduce((s, seg) => s + (seg.end - seg.start), 0);
-  const costEstimate = ((totalSelected / 60) * 0.0043).toFixed(4);
+  // Пустой список = обрабатывается весь файл, поэтому считаем по его длительности.
+  const billedSec = segments.length === 0
+    ? duration
+    : segments.reduce((s, seg) => s + (seg.end - seg.start), 0);
+  const costEstimate = ((billedSec / 60) * 0.0043).toFixed(4);
 
   return (
     <div className="space-y-3">
@@ -135,7 +138,9 @@ export default function SegmentPicker({
       </div>
 
       <p className="text-[11px] text-zinc-500">
-        Двойной клик на таймлайне — отметить IN, затем OUT. Или кнопки ниже.
+        {segments.length === 0
+          ? "Сегменты не выбраны — будет обработан весь файл. Чтобы взять часть: двойной клик на таймлайне (IN, затем OUT) или кнопки ниже."
+          : "Двойной клик на таймлайне — отметить IN, затем OUT. Или кнопки ниже."}
       </p>
 
       {/* IN / OUT buttons */}
@@ -237,7 +242,8 @@ export default function SegmentPicker({
       {/* Cost estimate */}
       <div className="flex items-center gap-3 text-sm">
         <span className="text-zinc-400">
-          Выбрано: <span className="text-white">{formatDuration(totalSelected)}</span>
+          {segments.length === 0 ? "Весь файл: " : "Выбрано: "}
+          <span className="text-white">{formatDuration(billedSec)}</span>
         </span>
         <span className="text-zinc-400">
           DeepGram ~<span className="text-green-400">${costEstimate}</span>

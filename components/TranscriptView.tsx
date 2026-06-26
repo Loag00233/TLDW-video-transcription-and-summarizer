@@ -27,10 +27,7 @@ export default function TranscriptView({ words, onSeek }: Props) {
 
   for (const w of words) {
     const last = grouped[grouped.length - 1];
-    const sameSpeaker = last && last.speaker === w.speaker;
-    const closeEnough = last && w.start - last.time < 8;
-
-    if (sameSpeaker && closeEnough) {
+    if (last && last.speaker === w.speaker) {
       last.words.push(w.word);
     } else {
       grouped.push({ time: w.start, speaker: w.speaker, words: [w.word] });
@@ -38,28 +35,26 @@ export default function TranscriptView({ words, onSeek }: Props) {
   }
 
   return (
-    <div className="space-y-3 text-sm">
+    <div className="space-y-4 text-sm">
       {grouped.map((g, i) => (
-        <div key={i} className="flex gap-3">
-          <button
-            onClick={() => onSeek(g.time)}
-            className="shrink-0 font-mono text-xs text-zinc-500 hover:text-blue-400 transition-colors pt-0.5"
-            title={`Jump to ${formatTimecode(g.time)}`}
-          >
-            {formatTimecode(g.time)}
-          </button>
-          <div>
+        <div key={i} className="space-y-1">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => onSeek(g.time)}
+              className="font-mono text-xs text-zinc-500 hover:text-blue-400 transition-colors"
+              title={`Jump to ${formatTimecode(g.time)}`}
+            >
+              {formatTimecode(g.time)}
+            </button>
             {g.speaker !== undefined && (
-              <span
-                className={`text-xs font-medium mr-2 ${COLORS[g.speaker % COLORS.length]}`}
-              >
+              <span className={`text-xs font-semibold ${COLORS[g.speaker % COLORS.length]}`}>
                 Спикер {g.speaker + 1}
               </span>
             )}
-            <span className="text-zinc-200 leading-relaxed">
-              {g.words.join(" ")}
-            </span>
           </div>
+          <p className="text-zinc-200 leading-relaxed pl-1">
+            {g.words.join(" ")}
+          </p>
         </div>
       ))}
     </div>

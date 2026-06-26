@@ -60,4 +60,9 @@ function migrate(db: Database.Database) {
     INSERT OR IGNORE INTO settings (key, value) VALUES ('ollama_model', 'llama3.1');
     INSERT OR IGNORE INTO settings (key, value) VALUES ('ollama_base_url', 'http://localhost:11434/v1');
   `);
+
+  // Транскрипция выполняется синхронно внутри запроса и не переживает
+  // перезапуск/падение сервера. Поэтому любые 'processing' на старте — это
+  // зомби от оборванных запросов; помечаем их ошибкой, чтобы UI не висел.
+  db.prepare("UPDATE transcriptions SET status = 'error' WHERE status = 'processing'").run();
 }
