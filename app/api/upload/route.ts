@@ -4,11 +4,9 @@ import fs from "fs";
 import { nanoid } from "nanoid";
 import { getDb } from "@/lib/db";
 import { getVideoDuration } from "@/lib/ffmpeg";
+import { MEDIA_DIR } from "@/lib/paths";
 
 const ALLOWED_EXTENSIONS = new Set([".mp4", ".mov", ".mkv", ".webm", ".m4a", ".mp3"]);
-
-// Папка с локальными медиа. Файл НЕ копируется — в БД хранится ссылка на оригинал.
-const MEDIA_DIR = process.env.LOCAL_MEDIA_DIR?.trim() || "/Users/macbook/Movies";
 
 /**
  * Ищет файл по имени в MEDIA_DIR (включая подпапки). Возвращает абсолютные пути совпадений.

@@ -24,13 +24,15 @@
 ```
 app/
   page.tsx              — главная (библиотека видео)
-  upload/page.tsx       — загрузка: drag-drop (локально) + поле URL (YouTube)
+  upload/page.tsx       — загрузка: drag-drop (локально) + поле URL (YouTube-аудио → расшифровка)
+  download/page.tsx     — скачивание видео с YouTube в ~/Movies с выбором качества (download-manager)
   videos/[id]/page.tsx  — экран видео: SegmentPicker → транскрипт → структура
   settings/page.tsx     — выбор LLM-провайдера и ввод ключей
   api/
     upload/             — локальный импорт ПО ССЫЛКЕ (см. «Хранение»)
-    youtube/            — старт фоновой загрузки с YouTube (возвращает jobId)
-    youtube/progress/   — опрос прогресса скачивания (polling)
+    youtube/            — старт фоновой загрузки YouTube-аудио для расшифровки (возвращает jobId)
+    youtube/download/   — старт фонового скачивания видео в ~/Movies (download-manager, без записи в БД)
+    youtube/progress/   — опрос прогресса скачивания, генерик по jobId (polling)
     youtube/maintenance/— кнопка «Обновить yt-dlp» (brew upgrade)
     transcribe/         — извлечение сегментов + DeepGram
     structure/          — суммаризация через выбранный LLM
@@ -50,8 +52,10 @@ lib/
   providers.ts — конфиг LLM-провайдеров (PROVIDERS)
   llm.ts       — единый вызов LLM (OpenAI-совместимый для groq/deepseek/gemini/ollama)
   claude.ts    — структурирование через Anthropic (tool_use → гарантированный JSON)
-  youtube.ts   — yt-dlp: проверка, скачивание с прогрессом, getYoutubeTitle, updateYtDlp
+  youtube.ts   — yt-dlp: проверка, скачивание аудио/видео с прогрессом (runYtDlpWithProgress), getYoutubeTitle, updateYtDlp
   ytJobs.ts    — in-memory хранилище прогресса YouTube-загрузок (для polling)
+  paths.ts     — MEDIA_DIR (источник правды) + sanitizeFilename/uniqueBaseName для имён скачанных файлов
+  format.ts    — fmtBytes/fmtTime для UI прогресса
   time.ts      — форматирование таймкодов
 storage/
   app.db       — SQLite (видео, транскрипты, структуры, настройки)
@@ -81,14 +85,24 @@ storage/
 
 ## Ключи / конфиг
 
-- `.env.local`: `DEEPGRAM_API_KEY`, `ANTHROPIC_API_KEY`, опц. `YT_DLP_COOKIES_FROM_BROWSER`, `YT_DLP_PLAYER_CLIENT`, `YT_DLP_PROXY`, `LOCAL_MEDIA_DIR`.
+- `.env.local`: `DEEPGRAM_API_KEY`, `ANTHROPIC_API_KEY`, опц. `YT_DLP_COOKIES_FROM_BROWSER`, `YT_DLP_PLAYER_CLIENT` (аудио, дефолт `tv`), `YT_DLP_VIDEO_PLAYER_CLIENT` (видео-скачивание, дефолт `android_vr`), `YT_DLP_PROXY`, `LOCAL_MEDIA_DIR`.
 - Ключи остальных LLM-провайдеров и выбор провайдера хранятся в таблице `settings` (вводятся в UI).
 
 ## YouTube-загрузка (детали)
 
 - Рабочая связка (2026): `--cookies-from-browser chrome` + `--extractor-args youtube:player_client=tv` (прямой https-поток, аудио, быстро, без 403) + Deno (решение JS-челленджей). При поломке — `brew upgrade yt-dlp` (кнопка на /upload).
 - Скачивание идёт **в фоне** через `spawn`, прогресс парсится из `--progress-template` и кладётся в `ytJobs` (in-memory, singleton через globalThis). Фронт опрашивает `/api/youtube/progress?id=` раз в секунду и рисует прогресс-бар. Прогресс не переживает перезапуск сервера (ок для локалки).
+- Общий движок `runYtDlpWithProgress(args, handlers)` в `lib/youtube.ts` используют обе функции: `downloadYoutubeAudioWithProgress` (аудио-флоу) и `downloadYoutubeVideoWithProgress` (download-флоу).
+
+## Скачивание видео (download-флоу, `/download`)
+
+- Отдельный **download-manager**: качает само видео в выбранном качестве в `~/Movies` и оставляет его себе; запись в `videos` НЕ создаётся (в отличие от аудио-флоу `/api/youtube`, который сразу пишет в БД и открывает расшифровку).
+- Поток: `/download` → `POST /api/youtube/download { url, quality }` → фоновое скачивание, прогресс в `ytJobs` → опрос того же `/api/youtube/progress?id=` → по `done` показываем `savedPath` + кнопку «Расшифровать», которая дёргает существующий `/api/upload { name }` и редиректит на `/videos/<id>`.
+- **Имя файла известно заранее:** роут берёт `getYoutubeTitle`, `sanitizeFilename` (чистка + лимит длины), `uniqueBaseName` (суффикс ` (N)` против перезаписи) и передаёт yt-dlp точный `-o "<base>.%(ext)s"`. Контейнер фиксирован пресетом (`mp4` для видео, `m4a` для `audio`), поэтому `savedPath` известен до старта.
+- **Пресеты → формат:** `best`/`1080p`/`720p`/`480p` → `bv*[…][ext=mp4]+ba[ext=m4a]/…` + `--merge-output-format mp4` (предпочитаем mp4/m4a-потоки, чтобы merge шёл ремуксом без перекодирования); `audio` → `--extract-audio --audio-format m4a`.
+- **player_client:** видео по умолчанию `android_vr` (не требует PO-токена, не DRM-залочен), а не `tv` (без cookies DRM-залочен и отдаёт только аудио). Override — `YT_DLP_VIDEO_PLAYER_CLIENT`. Аудио-флоу остаётся на `tv`.
 
 ## Журнал изменений (архитектурно значимое)
 
+- **2026-06-26** — Добавлен download-флоу: страница `/download` + `POST /api/youtube/download` качают видео в `~/Movies` с выбором качества (пресеты `Лучшее/1080p/720p/480p/Только аудио`), без записи в БД; «Расшифровать» переиспользует `/api/upload`. Новые `lib/paths.ts` (`MEDIA_DIR` вынесен из `/api/upload`, `sanitizeFilename`, `uniqueBaseName`) и `lib/format.ts` (`fmtBytes`/`fmtTime`, вынесены из `/upload`). `lib/youtube.ts`: общий движок `runYtDlpWithProgress`, параметризованный `player_client` (видео → `android_vr`, env `YT_DLP_VIDEO_PLAYER_CLIENT`), функция `downloadYoutubeVideoWithProgress`. Ссылка «Скачать» в шапке.
 - **2026-06-26** — Локальные файлы перестали копироваться: `/api/upload` теперь резолвит файл по имени в `LOCAL_MEDIA_DIR` и хранит ссылку на оригинал. YouTube-аудио переехало в `storage/audio`. Добавлены прогресс-бар скачивания (polling через `ytJobs`), кнопки «Обновить куки»/«Обновить yt-dlp» на /upload. Удалена мёртвая `downloadYoutubeAudio` (заменена на `…WithProgress`). Очищены старые копии в `storage/videos` (~10 ГБ) — остались только транскрипты в БД.

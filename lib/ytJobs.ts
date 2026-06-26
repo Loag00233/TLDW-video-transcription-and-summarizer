@@ -9,7 +9,9 @@ export type YtJob = {
   total: number; // байт (0 если неизвестно)
   speed: number; // байт/с
   eta: number; // сек (0 если неизвестно)
-  videoId?: string; // id готового видео для редиректа
+  videoId?: string; // id готового видео для редиректа (аудио-флоу /api/youtube)
+  savedPath?: string; // абсолютный путь сохранённого файла (download-флоу /api/youtube/download)
+  title?: string; // название ролика (для отчёта «Сохранено в …»)
   error?: string;
   updatedAt: number;
 };

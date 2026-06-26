@@ -37,12 +37,14 @@ async function ensureYtDlp(): Promise<void> {
  *   - YT_DLP_COOKIES_FILE=/path/cookies.txt  (экспортированный файл в формате Netscape)
  * Proxy подставляется только если он реально задан (YT_DLP_PROXY).
  */
-function commonArgs(): string[] {
+function commonArgs(opts: { playerClient?: string } = {}): string[] {
   const args = ["--no-playlist"];
 
   // Клиент плеера. tv отдаёт прямой https-поток только с аудио (~быстро, без 403);
-  // web_safari как fallback отдаёт медленные HLS-фрагменты.
-  const playerClient = process.env.YT_DLP_PLAYER_CLIENT?.trim() || "tv";
+  // web_safari как fallback отдаёт медленные HLS-фрагменты. Для скачивания видео нужен
+  // другой клиент (см. downloadYoutubeVideoWithProgress) — поэтому он параметризуется.
+  const playerClient =
+    opts.playerClient?.trim() || process.env.YT_DLP_PLAYER_CLIENT?.trim() || "tv";
   args.push("--extractor-args", `youtube:player_client=${playerClient}`);
 
   const proxy = process.env.YT_DLP_PROXY?.trim();
@@ -108,34 +110,22 @@ function num(s: string | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+type ProgressHandlers = {
+  onProgress: (p: DownloadProgress) => void;
+  onPostprocess?: () => void;
+};
+
 /**
- * Скачивает лучшую аудиодорожку и конвертирует в m4a (destDir/<id>.m4a) через spawn,
- * отдавая прогресс скачивания в onProgress. После 100% идёт фаза извлечения аудио
- * (ffmpeg) — по ней прогресса нет, дёргается onPostprocess. Возвращает путь к файлу.
+ * Запускает `yt-dlp <args>` через spawn и парсит построчный вывод: строки PROGRESS|…
+ * (из --progress-template) → onProgress; строки постобработки ffmpeg ([Merger]/
+ * [ExtractAudio]/[ffmpeg]) → onPostprocess. Резолвится по коду 0, иначе reject с хвостом
+ * stderr. Прогресс может идти и в stdout, и в stderr — слушаем оба.
  */
-export async function downloadYoutubeAudioWithProgress(
-  url: string,
-  destDir: string,
-  id: string,
-  onProgress: (p: DownloadProgress) => void,
-  onPostprocess?: () => void
-): Promise<string> {
-  await ensureYtDlp();
-  fs.mkdirSync(destDir, { recursive: true });
-
-  const outTemplate = path.join(destDir, `${id}.%(ext)s`);
-  const args = [
-    ...commonArgs(),
-    "-f", "bestaudio/best",
-    "--extract-audio",
-    "--audio-format", "m4a",
-    "--newline",
-    "--progress-template", PROGRESS_TEMPLATE,
-    "-o", outTemplate,
-    url,
-  ];
-
-  await new Promise<void>((resolve, reject) => {
+function runYtDlpWithProgress(
+  args: string[],
+  { onProgress, onPostprocess }: ProgressHandlers
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
     const child = spawn("yt-dlp", args);
     let stderrTail = "";
 
@@ -149,7 +139,11 @@ export async function downloadYoutubeAudioWithProgress(
           speed: num(speed),
           eta: num(eta),
         });
-      } else if (line.includes("[ExtractAudio]") || line.includes("[ffmpeg]")) {
+      } else if (
+        line.includes("[Merger]") ||
+        line.includes("[ExtractAudio]") ||
+        line.includes("[ffmpeg]")
+      ) {
         onPostprocess?.();
       }
     };
@@ -177,10 +171,98 @@ export async function downloadYoutubeAudioWithProgress(
       else reject(new Error(stderrTail.trim() || `yt-dlp завершился с кодом ${code}`));
     });
   });
+}
+
+/**
+ * Скачивает лучшую аудиодорожку и конвертирует в m4a (destDir/<id>.m4a) через spawn,
+ * отдавая прогресс скачивания в onProgress. После 100% идёт фаза извлечения аудио
+ * (ffmpeg) — по ней прогресса нет, дёргается onPostprocess. Возвращает путь к файлу.
+ */
+export async function downloadYoutubeAudioWithProgress(
+  url: string,
+  destDir: string,
+  id: string,
+  onProgress: (p: DownloadProgress) => void,
+  onPostprocess?: () => void
+): Promise<string> {
+  await ensureYtDlp();
+  fs.mkdirSync(destDir, { recursive: true });
+
+  const outTemplate = path.join(destDir, `${id}.%(ext)s`);
+  const args = [
+    ...commonArgs(),
+    "-f", "bestaudio/best",
+    "--extract-audio",
+    "--audio-format", "m4a",
+    "--newline",
+    "--progress-template", PROGRESS_TEMPLATE,
+    "-o", outTemplate,
+    url,
+  ];
+
+  await runYtDlpWithProgress(args, { onProgress, onPostprocess });
 
   const finalPath = path.join(destDir, `${id}.m4a`);
   if (!fs.existsSync(finalPath)) {
     throw new Error("Не удалось скачать аудио с YouTube");
   }
   return finalPath;
+}
+
+export type VideoQuality = "best" | "1080p" | "720p" | "480p" | "audio";
+
+/**
+ * Формат yt-dlp по пресету. Видео-пресеты предпочитают уже-mp4/m4a потоки (merge ремуксом,
+ * без перекодирования), с каскадным fallback на любые лучшие; audio тянет m4a напрямую.
+ */
+function formatArgsFor(quality: VideoQuality): string[] {
+  if (quality === "audio") {
+    return ["-f", "ba[ext=m4a]/ba/best", "--extract-audio", "--audio-format", "m4a"];
+  }
+  if (quality === "best") {
+    return ["-f", "bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/b", "--merge-output-format", "mp4"];
+  }
+  const h = { "1080p": 1080, "720p": 720, "480p": 480 }[quality];
+  return [
+    "-f",
+    `bv*[height<=${h}][ext=mp4]+ba[ext=m4a]/bv*[height<=${h}]+ba/b[height<=${h}]/b`,
+    "--merge-output-format",
+    "mp4",
+  ];
+}
+
+/**
+ * Скачивает видео (или только аудио) в выбранном качестве по точному outTemplate
+ * (`<base>.%(ext)s`), отдавая прогресс. Запись в БД не делает — вызывающий сам знает
+ * итоговый путь (контейнер фиксирован: mp4 для видео, m4a для audio).
+ *
+ * player_client для видео по умолчанию android_vr: tv без cookies DRM-залочен и даёт
+ * только аудио; android_vr не требует PO-токена и отдаёт видео. Override —
+ * YT_DLP_VIDEO_PLAYER_CLIENT (напр. tv при наличии cookies).
+ */
+export async function downloadYoutubeVideoWithProgress(
+  url: string,
+  outTemplate: string,
+  quality: VideoQuality,
+  { onProgress, onPostprocess }: ProgressHandlers
+): Promise<void> {
+  await ensureYtDlp();
+
+  const base =
+    quality === "audio"
+      ? commonArgs()
+      : commonArgs({
+          playerClient: process.env.YT_DLP_VIDEO_PLAYER_CLIENT?.trim() || "android_vr",
+        });
+
+  const args = [
+    ...base,
+    ...formatArgsFor(quality),
+    "--newline",
+    "--progress-template", PROGRESS_TEMPLATE,
+    "-o", outTemplate,
+    url,
+  ];
+
+  await runYtDlpWithProgress(args, { onProgress, onPostprocess });
 }

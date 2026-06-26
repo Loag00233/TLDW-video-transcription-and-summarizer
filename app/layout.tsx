@@ -15,7 +15,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <a href="/" className="font-semibold text-lg tracking-tight">
             VideoTranscript
           </a>
-          <div className="flex gap-3 text-sm">
+          <div className="flex gap-3 text-sm items-center">
+            <a href="/download" className="text-zinc-400 hover:text-white transition-colors">
+              Скачать
+            </a>
             <a href="/settings" className="text-zinc-400 hover:text-white transition-colors">
               Settings
             </a>
