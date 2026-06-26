@@ -85,7 +85,7 @@ storage/
 
 ## Ключи / конфиг
 
-- `.env.local`: `DEEPGRAM_API_KEY`, `ANTHROPIC_API_KEY`, опц. `YT_DLP_COOKIES_FROM_BROWSER`, `YT_DLP_PLAYER_CLIENT` (аудио, дефолт `tv`), `YT_DLP_VIDEO_PLAYER_CLIENT` (видео-скачивание, дефолт `android_vr`), `YT_DLP_PROXY`, `LOCAL_MEDIA_DIR`.
+- `.env.local`: `DEEPGRAM_API_KEY`, `ANTHROPIC_API_KEY`, опц. `YT_DLP_COOKIES_FROM_BROWSER`, `YT_DLP_PLAYER_CLIENT` (аудио, дефолт `tv`), `YT_DLP_VIDEO_PLAYER_CLIENT` (видео-скачивание, дефолт `tv`), `YT_DLP_PROXY`, `LOCAL_MEDIA_DIR`.
 - Ключи остальных LLM-провайдеров и выбор провайдера хранятся в таблице `settings` (вводятся в UI).
 
 ## YouTube-загрузка (детали)
@@ -100,9 +100,9 @@ storage/
 - Поток: `/download` → `POST /api/youtube/download { url, quality }` → фоновое скачивание, прогресс в `ytJobs` → опрос того же `/api/youtube/progress?id=` → по `done` показываем `savedPath` + кнопку «Расшифровать», которая дёргает существующий `/api/upload { name }` и редиректит на `/videos/<id>`.
 - **Имя файла известно заранее:** роут берёт `getYoutubeTitle`, `sanitizeFilename` (чистка + лимит длины), `uniqueBaseName` (суффикс ` (N)` против перезаписи) и передаёт yt-dlp точный `-o "<base>.%(ext)s"`. Контейнер фиксирован пресетом (`mp4` для видео, `m4a` для `audio`), поэтому `savedPath` известен до старта.
 - **Пресеты → формат:** `best`/`1080p`/`720p`/`480p` → `bv*[…][ext=mp4]+ba[ext=m4a]/…` + `--merge-output-format mp4` (предпочитаем mp4/m4a-потоки, чтобы merge шёл ремуксом без перекодирования); `audio` → `--extract-audio --audio-format m4a`.
-- **player_client:** видео по умолчанию `android_vr` (не требует PO-токена, не DRM-залочен), а не `tv` (без cookies DRM-залочен и отдаёт только аудио). Override — `YT_DLP_VIDEO_PLAYER_CLIENT`. Аудио-флоу остаётся на `tv`.
+- **player_client:** видео качается тем же `tv` (наш общий дефолт) — проверено, `tv` отдаёт DASH-видео всех высот до 4K (video-only потоки мержатся с аудио в mp4). Override — `YT_DLP_VIDEO_PLAYER_CLIENT`, если на каком-то ролике `tv` перестанет давать видео.
 
 ## Журнал изменений (архитектурно значимое)
 
-- **2026-06-26** — Добавлен download-флоу: страница `/download` + `POST /api/youtube/download` качают видео в `~/Movies` с выбором качества (пресеты `Лучшее/1080p/720p/480p/Только аудио`), без записи в БД; «Расшифровать» переиспользует `/api/upload`. Новые `lib/paths.ts` (`MEDIA_DIR` вынесен из `/api/upload`, `sanitizeFilename`, `uniqueBaseName`) и `lib/format.ts` (`fmtBytes`/`fmtTime`, вынесены из `/upload`). `lib/youtube.ts`: общий движок `runYtDlpWithProgress`, параметризованный `player_client` (видео → `android_vr`, env `YT_DLP_VIDEO_PLAYER_CLIENT`), функция `downloadYoutubeVideoWithProgress`. Ссылка «Скачать» в шапке.
+- **2026-06-26** — Добавлен download-флоу: страница `/download` + `POST /api/youtube/download` качают видео в `~/Movies` с выбором качества (пресеты `Лучшее/1080p/720p/480p/Только аудио`), без записи в БД; «Расшифровать» переиспользует `/api/upload`. Новые `lib/paths.ts` (`MEDIA_DIR` вынесен из `/api/upload`, `sanitizeFilename`, `uniqueBaseName`) и `lib/format.ts` (`fmtBytes`/`fmtTime`, вынесены из `/upload`). `lib/youtube.ts`: общий движок `runYtDlpWithProgress`, параметризованный `player_client` (видео качается на дефолтном `tv`, override env `YT_DLP_VIDEO_PLAYER_CLIENT`), функция `downloadYoutubeVideoWithProgress`. Ссылка «Скачать» в шапке. (Облачный план изначально ставил `android_vr`, но проверка показала, что у него нет видео-форматов — заменено на `tv`.)
 - **2026-06-26** — Локальные файлы перестали копироваться: `/api/upload` теперь резолвит файл по имени в `LOCAL_MEDIA_DIR` и хранит ссылку на оригинал. YouTube-аудио переехало в `storage/audio`. Добавлены прогресс-бар скачивания (polling через `ytJobs`), кнопки «Обновить куки»/«Обновить yt-dlp» на /upload. Удалена мёртвая `downloadYoutubeAudio` (заменена на `…WithProgress`). Очищены старые копии в `storage/videos` (~10 ГБ) — остались только транскрипты в БД.

@@ -236,9 +236,9 @@ function formatArgsFor(quality: VideoQuality): string[] {
  * (`<base>.%(ext)s`), отдавая прогресс. Запись в БД не делает — вызывающий сам знает
  * итоговый путь (контейнер фиксирован: mp4 для видео, m4a для audio).
  *
- * player_client для видео по умолчанию android_vr: tv без cookies DRM-залочен и даёт
- * только аудио; android_vr не требует PO-токена и отдаёт видео. Override —
- * YT_DLP_VIDEO_PLAYER_CLIENT (напр. tv при наличии cookies).
+ * player_client по умолчанию tv (наш общий дефолт): проверено — отдаёт DASH-видео
+ * всех высот до 4K, наш селектор скачивает video-only+audio и мержит в mp4. Override —
+ * YT_DLP_VIDEO_PLAYER_CLIENT, если на каком-то ролике tv перестанет давать видео.
  */
 export async function downloadYoutubeVideoWithProgress(
   url: string,
@@ -248,12 +248,8 @@ export async function downloadYoutubeVideoWithProgress(
 ): Promise<void> {
   await ensureYtDlp();
 
-  const base =
-    quality === "audio"
-      ? commonArgs()
-      : commonArgs({
-          playerClient: process.env.YT_DLP_VIDEO_PLAYER_CLIENT?.trim() || "android_vr",
-        });
+  const videoClient = process.env.YT_DLP_VIDEO_PLAYER_CLIENT?.trim();
+  const base = videoClient ? commonArgs({ playerClient: videoClient }) : commonArgs();
 
   const args = [
     ...base,
